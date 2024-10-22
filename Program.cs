@@ -1,94 +1,132 @@
 ﻿using System;
-using System.Collections.Concurrent;
-using System.IO;
-using System.Net;
 using System.Net.Sockets;
 using System.Text;
+using System.Text.Json;
 using System.Threading.Tasks;
 
-namespace MessageReceiver
+namespace MessageSender
 {
 	class Program
 	{
-		private static ConcurrentBag<(DateTime timestamp, string message)> messageBag = new ConcurrentBag<(DateTime, string)>();
-		private static readonly object locker = new object();
-
 		static async Task Main(string[] args)
 		{
-			Console.WriteLine("Запуск TCP-сервера...");
+			Console.WriteLine("Укажите адрес сервера (например, 127.0.0.1):");
+			string server = Console.ReadLine();
 
-			int port = 80; // Используем порт 8080
-			IPAddress ip = IPAddress.Any; // Слушаем на всех доступных IP адресах
-
-			TcpListener listener = new TcpListener(ip, port);
-			listener.Start();
-			Console.WriteLine($"Сервер слушает на {ip}:{port}");
-
-			Task logTask = LogMessagesPeriodically(); // Задача для логирования
-
-			while (true)
+			Console.WriteLine("Укажите порт (например, 80):");
+			if (!int.TryParse(Console.ReadLine(), out int port))
 			{
-				TcpClient client = await listener.AcceptTcpClientAsync(); // Ожидание клиента
-				_ = Task.Run(() => HandleClient(client)); // Асинхронная обработка клиента
+				Console.WriteLine("Некорректный ввод порта.");
+				return;
 			}
-		}
-
-		static async Task HandleClient(TcpClient client)
-		{
-			NetworkStream stream = client.GetStream();
-			byte[] buffer = new byte[1024];
 
 			while (true)
 			{
-				try
+				// Запрашиваем количество сообщений
+				Console.WriteLine("Укажите количество сообщений для отправки:");
+				if (!int.TryParse(Console.ReadLine(), out int messageCount))
 				{
-					int byteCount = await stream.ReadAsync(buffer, 0, buffer.Length);
-					if (byteCount == 0) break; // Если клиент закрыл соединение
-
-					string message = Encoding.UTF8.GetString(buffer, 0, byteCount);
-					DateTime timestamp = DateTime.Now;
-					messageBag.Add((timestamp, message));
-
-					Console.WriteLine($"Принято сообщение: {timestamp:yyyy-MM-dd HH:mm:ss.fff} - {message}");
+					Console.WriteLine("Некорректный ввод количества сообщений.");
+					return;
 				}
-				catch (Exception ex)
+
+				// Создаем массив сообщений заранее
+				var messages = CreateMessages(messageCount);
+
+				// Вывод времени начала отправки
+				DateTime startTime = DateTime.Now;
+				Console.WriteLine($"[{startTime:yyyy-MM-dd HH:mm:ss.fff}] Начало отправки {messageCount} сообщений...");
+
+				int batchSize = 1; // Количество сообщений на один поток
+				int threadCount = Math.Min(1000000, messageCount / batchSize); // Количество потоков
+				await ParallelSendMessages(server, port, messages, threadCount);
+
+				// Вывод времени окончания отправки
+				DateTime endTime = DateTime.Now;
+				Console.WriteLine($"[{endTime:yyyy-MM-dd HH:mm:ss.fff}] Отправка {messageCount} сообщений завершена.");
+				TimeSpan duration = endTime - startTime;
+				Console.WriteLine($"Отправка {messageCount} сообщений заняла {duration.TotalMilliseconds} миллисекунд.");
+
+				// Спрашиваем, нужно ли отправить еще
+				Console.WriteLine("Отправить еще сообщения? (y/n):");
+				string response = Console.ReadLine().ToLower();
+				if (response != "y")
 				{
-					Console.WriteLine($"Ошибка при обработке клиента: {ex.Message}");
 					break;
 				}
 			}
-
-			client.Close(); // Закрываем соединение после обработки
 		}
 
-		static async Task LogMessagesPeriodically()
+		// Метод для создания сообщений
+		static MessageData[] CreateMessages(int messageCount)
 		{
-			while (true)
+			var messages = new MessageData[messageCount];
+
+			for (int i = 0; i < messageCount; i++)
 			{
-				await Task.Delay(60000);  // Логировать каждые 60 секунд
-
-				if (messageBag.IsEmpty)
+				// Создаем JSON для каждого сообщения
+				var messageContent = new
 				{
-					Console.WriteLine("Сообщений для логирования нет.");
-					continue;
-				}
+					PlayerId = $"player{i % 1000}",
+					Value1 = $"example_{i}",
+					Value2 = $"example_{i}"
+				};
 
-				lock (locker)
+				string messageJson = JsonSerializer.Serialize(messageContent);
+
+				messages[i] = new MessageData
 				{
-					string logFileName = $"log_{DateTime.Now:yyyyMMdd_HHmmss}.txt";
-					using (StreamWriter writer = new StreamWriter(logFileName))
-					{
-						foreach (var (timestamp, message) in messageBag)
-						{
-							writer.WriteLine($"{timestamp:yyyy-MM-dd HH:mm:ss.fff} - {message}");
-						}
-					}
+					Id = i, // Присваиваем уникальный ID
+					MessageJson = messageJson // Сохраняем JSON сообщение
+				};
+			}
 
-					Console.WriteLine($"Сообщения записаны в файл: {logFileName}");
+			return messages;
+		}
 
-					messageBag = new ConcurrentBag<(DateTime, string)>(); // Очищаем сообщения
+		// Параллельная отправка сообщений
+		static async Task ParallelSendMessages(string server, int port, MessageData[] messages, int threadCount)
+		{
+			var tasks = new Task[threadCount];
+			int messagesPerThread = messages.Length / threadCount;
+
+			for (int i = 0; i < threadCount; i++)
+			{
+				// Разделяем отправку сообщений между потоками
+				int startIndex = i * messagesPerThread;
+				int endIndex = (i == threadCount - 1) ? messages.Length : startIndex + messagesPerThread;
+
+				tasks[i] = Task.Run(() => SendMessages(server, port, messages, startIndex, endIndex));
+			}
+
+			await Task.WhenAll(tasks);
+		}
+
+		// Отправка сообщений
+		static void SendMessages(string server, int port, MessageData[] messages, int startIndex, int endIndex)
+		{
+			using (TcpClient client = new TcpClient(server, port))
+			{
+				NetworkStream stream = client.GetStream();
+
+				for (int i = startIndex; i < endIndex; i++)
+				{
+					var messageData = messages[i];
+
+					// Преобразуем строку JSON в байты
+					byte[] data = Encoding.UTF8.GetBytes(messageData.MessageJson);
+
+					// Отправляем данные
+					stream.Write(data, 0, data.Length);
 				}
 			}
 		}
+	}
+
+	// Класс для хранения данных сообщения
+	class MessageData
+	{
+		public int Id { get; set; } // Уникальный идентификатор сообщения
+		public string MessageJson { get; set; } // Строка JSON сообщения
 	}
 }
