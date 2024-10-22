@@ -1,8 +1,7 @@
-﻿using System;
-using System.Net.Sockets;
+﻿using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
-using System.Threading.Tasks;
+
 
 namespace MessageSender
 {
@@ -13,7 +12,7 @@ namespace MessageSender
 			Console.WriteLine("Укажите адрес сервера (например, 127.0.0.1):");
 			string server = Console.ReadLine();
 
-			Console.WriteLine("Укажите порт (например, 80):");
+			Console.WriteLine("Укажите порт (например, 8080):");
 			if (!int.TryParse(Console.ReadLine(), out int port))
 			{
 				Console.WriteLine("Некорректный ввод порта.");
