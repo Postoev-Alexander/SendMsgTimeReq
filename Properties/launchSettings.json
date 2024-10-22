@@ -1,0 +1,10 @@
+{
+  "profiles": {
+    "SendMsgTimeReq": {
+      "commandName": "Project"
+    },
+    "Container (Dockerfile)": {
+      "commandName": "Docker"
+    }
+  }
+}
