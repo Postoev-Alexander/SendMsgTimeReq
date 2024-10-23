@@ -102,7 +102,8 @@ namespace MessageSender
 		}
 
 		// Отправка сообщений
-		static void SendMessages(string server, int port, MessageData[] messages, int startIndex, int endIndex)
+		// Метод для отправки сообщений с получением ответа от сервера
+		static async Task SendMessages(string server, int port, MessageData[] messages, int startIndex, int endIndex)
 		{
 			using (TcpClient client = new TcpClient(server, port))
 			{
@@ -116,7 +117,19 @@ namespace MessageSender
 					byte[] data = Encoding.UTF8.GetBytes(messageData.MessageJson);
 
 					// Отправляем данные
-					stream.Write(data, 0, data.Length);
+					DateTime sendTime = DateTime.Now; // Время отправки сообщения
+					await stream.WriteAsync(data, 0, data.Length);
+
+					// Получаем ответ от сервера
+					byte[] responseBuffer = new byte[1024];
+					int bytesRead = await stream.ReadAsync(responseBuffer, 0, responseBuffer.Length);
+					string response = Encoding.UTF8.GetString(responseBuffer, 0, bytesRead);
+
+					DateTime receiveTime = DateTime.Now; // Время получения ответа
+					TimeSpan roundTripTime = receiveTime - sendTime; // Время, затраченное на отправку и получение ответа
+
+					Console.WriteLine($"[{receiveTime:yyyy-MM-dd HH:mm:ss.fff}] Ответ получен: {response}");
+					Console.WriteLine($"Задержка для сообщения {i}: {roundTripTime.TotalMilliseconds} миллисекунд.");
 				}
 			}
 		}
